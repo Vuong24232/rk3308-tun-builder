@@ -1,0 +1,67 @@
+name: Build Firefly RK3308 Kernel with TUN
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
+          sudo apt-get clean
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git build-essential gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            bison flex libssl-dev lzop device-tree-compiler u-boot-tools bc python2 liblz4-tool \
+            libncurses5-dev libncursesw5-dev rsync
+          sudo ln -sf /usr/bin/python2 /usr/bin/python || true
+
+      - name: Clone Firefly RK3308 Linux SDK
+        run: |
+          echo "Cloning Firefly RK3308 Linux SDK..."
+          git clone --depth=1 -b firefly https://gitlab.com/TeeFirefly/rk3308-linux.git sdk
+
+      - name: Configure Board & Enable TUN
+        run: |
+          cd sdk
+          ./build.sh roc-rk3308b-cc-plus-ubuntu.mk
+          DEFCONFIG="kernel/arch/arm64/configs/firefly-rk3308b_linux_defconfig"
+          sed -i '/CONFIG_TUN/d' "$DEFCONFIG"
+          echo "CONFIG_TUN=y" >> "$DEFCONFIG"
+          echo "CONFIG_NET_IP_TUNNEL=y" >> "$DEFCONFIG"
+          echo "CONFIG_INET_TUNNEL=y" >> "$DEFCONFIG"
+          echo "CONFIG_WIREGUARD=m" >> "$DEFCONFIG"
+          tail -n 10 "$DEFCONFIG"
+
+      - name: Compile Kernel Image
+        run: |
+          cd sdk
+          ./build.sh kernel
+
+      - name: Package Output Artifacts
+        run: |
+          mkdir -p output
+          cd sdk
+          if [ -f rockdev/boot.img ]; then
+            cp rockdev/boot.img ../output/
+          elif [ -f kernel/boot.img ]; then
+            cp kernel/boot.img ../output/
+          fi
+          if [ -f rockdev/kernel.img ]; then
+            cp rockdev/kernel.img ../output/
+          fi
+          if [ -f rockdev/resource.img ]; then
+            cp rockdev/resource.img ../output/
+          fi
+          cd ..
+          ls -lh output/
+
+      - name: Upload boot.img to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rk3308-boot-tun
+          path: output/*
